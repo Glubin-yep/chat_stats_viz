@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Розширений аналіз чату з Telegram result.json
+Розширений аналіз чату з Telegram та Instagram
 """
 
 import json
@@ -17,10 +17,11 @@ import seaborn as sns
 from wordcloud import WordCloud
 
 def safe_filename(name):
+    """Створює безпечне ім'я файлу, видаляючи неприпустимі символи."""
     return re.sub(r'[^a-zA-Z0-9а-яА-ЯёЁіІїЇєЄ _-]', '_', name)
 
 # ---------- Налаштування ----------
-INPUT_FILE = "result.json"
+INPUT_FILE = "message_1.json"  # Може бути "result.json" (Telegram) або "message_1.json" (Instagram)
 OUTPUT_DIR = "output"
 INACTIVITY_THRESHOLD_HOURS = 6.0
 MAX_RESPONSE_SECONDS = 60 * 60 * 24 * 7
@@ -31,28 +32,49 @@ STOPWORDS = set("""
 """.split())
 
 # ---------- Завантаження ----------
-def load_messages(path):
-    with open(path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    msgs = data.get("messages", [])
-    parsed = []
-    for m in msgs:
-        if "date_unixtime" in m and m["date_unixtime"]:
-            ts = int(m["date_unixtime"])
+def load_messages(paths):
+    """Завантажує та об'єднує повідомлення з кількох файлів JSON."""
+    parsed_all = []
+
+    for path in paths:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        # Формат Instagram
+        if "participants" in data and "messages" in data:
+            for m in data.get("messages", []):
+                parsed_all.append({
+                    "id": None,
+                    "from": m.get("sender_name"),
+                    "from_id": m.get("sender_name"),
+                    "ts": int(m["timestamp_ms"] / 1000),
+                    "text": m.get("content", ""),
+                    "is_media": any(k in m for k in ("photos", "videos", "audio_files", "share"))
+                })
+        # Формат Telegram
         else:
-            ts = int(datetime.fromisoformat(m["date"]).replace(tzinfo=timezone.utc).timestamp())
-        parsed.append({
-            "id": m.get("id"),
-            "from": m.get("from"),
-            "from_id": m.get("from_id"),
-            "ts": ts,
-            "text": m.get("text", ""),
-            "is_media": any(k in m for k in ("photo", "file", "media_type", "video", "voice_message"))
-        })
-    parsed.sort(key=lambda x: x["ts"])
-    return parsed
+            msgs = data.get("messages", [])
+            for m in msgs:
+                if "date_unixtime" in m and m["date_unixtime"]:
+                    ts = int(m["date_unixtime"])
+                else:
+                    ts = int(datetime.fromisoformat(m["date"]).replace(tzinfo=timezone.utc).timestamp())
+                parsed_all.append({
+                    "id": m.get("id"),
+                    "from": m.get("from"),
+                    "from_id": m.get("from_id"),
+                    "ts": ts,
+                    "text": m.get("text", ""),
+                    "is_media": any(k in m for k in ("photo", "file", "media_type", "video", "voice_message"))
+                })
+
+    parsed_all.sort(key=lambda x: x["ts"])
+    return parsed_all
+
+
 
 def human_readable_seconds(s):
+    """Перетворює секунди в людиночитаємий формат (наприклад, '1d 2h 3m 4s')."""
     if s is None or math.isnan(s):
         return "-"
     s = int(round(s))
@@ -68,6 +90,7 @@ def human_readable_seconds(s):
 
 # ---------- Аналіз ----------
 def analyze(messages):
+    """Аналізує повідомлення та повертає статистику."""
     valid_msgs = [m for m in messages if m.get("from") or m.get("from_id")]
     users = sorted({str(m["from"] or m["from_id"]) for m in valid_msgs})
 
@@ -142,9 +165,10 @@ def analyze(messages):
             "median_response": median,
             "p90_response": p90,
             "avg_length_chars": np.mean(lengths_by_user[u]) if lengths_by_user[u] else 0,
-"avg_length_words": np.mean([
-    len(re.findall(r"\b\w+\b", txt)) for txt in texts_by_user[u]
-]) if texts_by_user[u] else 0,            "media_percent": (media_counts[u] / len(lengths_by_user[u]) * 100) if lengths_by_user[u] else 0,
+            "avg_length_words": np.mean([
+                len(re.findall(r"\b\w+\b", txt)) for txt in texts_by_user[u]
+            ]) if texts_by_user[u] else 0,
+            "media_percent": (media_counts[u] / len(lengths_by_user[u]) * 100) if lengths_by_user[u] else 0,
             "max_streak": streaks.get(u, 0)
         })
 
@@ -158,9 +182,16 @@ def analyze(messages):
 
 # ---------- Візуалізація ----------
 def visualize(results):
+    """Створює та зберігає графіки за результатами аналізу."""
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     df = results["stats_df"]
+    
+    # Використання human_readable_seconds для форматування часу відповіді
+    for col in ["mean_response", "median_response", "p90_response"]:
+        df[col + "_hr"] = df[col].apply(human_readable_seconds)
+
     df.to_csv(os.path.join(OUTPUT_DIR, "summary.csv"), index=False)
+
 
     plt.figure(figsize=(8,4))
     plt.bar(df["user"], df["starter_count"])
@@ -194,7 +225,7 @@ def visualize(results):
         if not words:
             continue
         wc = WordCloud(width=800, height=400, background_color="white").generate(" ".join(words))
-        wc.to_file(os.path.join(OUTPUT_DIR, f"wordcloud_{u}.png"))
+        wc.to_file(os.path.join(OUTPUT_DIR, f"wordcloud_{safe_filename(u)}.png"))
 
     months = sorted(results["timeline"])
     vals = [results["timeline"][m] for m in months]
@@ -209,12 +240,15 @@ def visualize(results):
 
 # ---------- main ----------
 def main():
-    msgs = load_messages(INPUT_FILE)
+    """Головна функція для виконання скрипту."""
+    files = ["message_1.json", "message_2.json", "result.json"]  # можна додати більше
+    msgs = load_messages(files)
     print(f"Loaded {len(msgs)} messages")
     res = analyze(msgs)
     print(res["stats_df"])
     visualize(res)
     print(f"Saved graphs to {OUTPUT_DIR}")
+
 
 if __name__ == "__main__":
     main()
