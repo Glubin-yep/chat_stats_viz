@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-# Розширений аналіз чату з Telegram та Instagram з підтримкою emoji
+import sys
 import json
 import os
 import re
@@ -14,13 +13,12 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from wordcloud import WordCloud
 
-# Шрифт з підтримкою emoji
 matplotlib.rcParams["font.sans-serif"] = ["DejaVu Sans", "Segoe UI Emoji"]
 matplotlib.rcParams["font.family"] = ["DejaVu Sans", "Segoe UI Emoji"]
 
 
 # ---------- Налаштування ----------
-FILES = ["message_1.json", "message_2.json", "result.json"]  # можна додати більше
+FILES = ["message_1.json", "message_2.json", "result.json"]
 OUTPUT_DIR = "output"
 INACTIVITY_THRESHOLD_HOURS = 6.0
 MAX_RESPONSE_SECONDS = 60 * 60 * 24 * 7
@@ -35,12 +33,10 @@ STOPWORDS = set(
 
 # ---------- Допоміжні функції ----------
 def safe_filename(name):
-    # Створює безпечне ім'я файлу, видаляючи неприпустимі символи.
     return re.sub(r"[^0-9A-Za-zА-Яа-яЁёІіЇїЄє _-]", "_", name)
 
 
 def fix_instagram_text(s):
-    # Виправляє текст з Instagram, який зламаний через неправильну кодування.
     if not isinstance(s, str):
         return ""
     try:
@@ -50,7 +46,6 @@ def fix_instagram_text(s):
 
 
 def human_readable_seconds(s):
-    # Перетворює секунди в людиночитаємий формат.
     if s is None or math.isnan(s):
         return "-"
     s = int(round(s))
@@ -72,7 +67,7 @@ def human_readable_seconds(s):
 def tokenize_with_emoji(text):
     """Розбиває текст на слова та emoji, фільтруючи сміття."""
     emoji_pattern = r"\p{Extended_Pictographic}"
-    word_pattern = r"[a-zA-Zа-яА-ЯёЁіІїЇєЄ]{2,}"  # слова довжиною >= 2
+    word_pattern = r"[a-zA-Zа-яА-ЯёЁіІїЇєЄ]{2,}"
     pattern = f"{emoji_pattern}|{word_pattern}"
     tokens = regex.findall(pattern, text)
     return [t for t in tokens if t.strip()]
@@ -201,10 +196,11 @@ def analyze(messages):
                 )
             current_streak_user = user
             current_streak_len = 1
-    if current_streak_user:
-        streaks[current_streak_user] = max(
-            streaks[current_streak_user], current_streak_len
-        )
+
+        if current_streak_user:
+            streaks[current_streak_user] = max(
+                streaks[current_streak_user], current_streak_len
+            )
 
     stats = []
     for u in users:
@@ -308,8 +304,8 @@ def visualize(results):
             colLabels=df.columns,
             cellLoc="center",
             loc="center",
-            colColours=["#4F81BD", "#4F81BD", "#4F81BD"],  # колір заголовка (синій)
-            colWidths=[0.6, 0.3],  # пропорції колонок
+            colColours=["#4F81BD", "#4F81BD", "#4F81BD"],
+            colWidths=[0.6, 0.3],
         )
 
         ax.set_title(
@@ -327,10 +323,10 @@ def visualize(results):
         else:
             # Альтернатива для рядків (змінюємо колір фону по черзі)
             if row % 2 == 0:
-                cell.set_facecolor("#4F81BD")  # світло-сірий
+                cell.set_facecolor("#4F81BD")
             else:
                 cell.set_facecolor("white")
-                cell.set_edgecolor("#CCCCCC")  # світло-сіра межа
+                cell.set_edgecolor("#CCCCCC")
                 cell.set_linewidth(0.5)
 
         plt.tight_layout()
@@ -353,7 +349,7 @@ def visualize(results):
     plt.xticks(rotation=45, fontsize=12)
     plt.yticks(fontsize=12)
 
-    plt.grid(axis="y", linestyle="--", alpha=0.7)  # сітка по осі Y
+    plt.grid(axis="y", linestyle="--", alpha=0.7)
 
     plt.title("Таймлайн активності", fontsize=16, weight="bold")
     plt.ylabel("Кількість", fontsize=14)
@@ -370,7 +366,14 @@ def visualize(results):
 
 # ---------- main ----------
 def main():
-    msgs = load_messages(FILES)
+    files_to_load = sys.argv[1:]
+
+    if not files_to_load:
+        print("Usage: python3 chat_stats_viz.py <file1.json> [file2.json] ...")
+        return
+
+    print(f"Analyzing files: {files_to_load}")
+    msgs = load_messages(files_to_load)
     print(f"Loaded {len(msgs)} messages")
     res = analyze(msgs)
     print(res["stats_df"])
